@@ -1,0 +1,87 @@
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, MessageHandler, ContextTypes, filters
+import requests
+
+# 🔑 Bot tokenini shu yerga yoz
+BOT_TOKEN = '7770102807:AAHkh-8T1lIwvztxL8wyI7neiXqEXl_wJ7s'
+
+# 📦 Foydalanuvchi ma’lumotlari
+user_data = {}
+
+# 🌍 Valyuta ro‘yxati
+currencies = ['USD', 'UZS', 'EUR', 'RUB', 'GBP', 'JPY', 'KZT']
+
+# 📊 Valyuta kursini olish funksiyasi
+def get_exchange_rate(base='USD', target='UZS'):
+    url = f"https://api.exchangerate-api.com/v4/latest/{base}"
+    response = requests.get(url)
+    if response.status_code == 200:
+        data = response.json()
+        return data['rates'].get(target)
+    return None
+
+# 🚀 /start komandasi
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    user_data[user_id] = {'from': None, 'to': None}
+
+    keyboard = [[InlineKeyboardButton(cur, callback_data=f'from_{cur}')] for cur in currencies]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text("💱 Qaysi valyutani almashtirmoqchisiz?", reply_markup=reply_markup)
+
+# 🔘 Tugmalarni boshqarish
+async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+
+    data = query.data
+    if data.startswith("from_"):
+        user_data[user_id]['from'] = data[5:]
+        keyboard = [[InlineKeyboardButton(cur, callback_data=f'to_{cur}')] for cur in currencies]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.edit_message_text(f"Tanlangan valyuta: {user_data[user_id]['from']}\n➡ Qaysi valyutaga o‘tkazmoqchisiz?", reply_markup=reply_markup)
+
+    elif data.startswith("to_"):
+        user_data[user_id]['to'] = data[3:]
+        from_currency = user_data[user_id]['from']
+        to_currency = user_data[user_id]['to']
+        keyboard = [[InlineKeyboardButton("✅ Tayyor", callback_data='done')]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.edit_message_text(f"🔄 Tanlov: {from_currency} ➡ {to_currency}", reply_markup=reply_markup)
+
+    elif data == "done":
+        await query.edit_message_text("✍️ Iltimos, miqdorni kiriting (faqat son):")
+
+# 💰 Miqdorni qabul qilish va hisoblash
+async def handle_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id not in user_data or not user_data[user_id].get('from') or not user_data[user_id].get('to'):
+        await update.message.reply_text("❗ Iltimos, /start buyrug‘i orqali qayta boshlang.")
+        return
+
+    try:
+        amount = float(update.message.text)
+        from_currency = user_data[user_id]['from']
+        to_currency = user_data[user_id]['to']
+        rate = get_exchange_rate(from_currency, to_currency)
+
+        if rate is None:
+            await update.message.reply_text("⚠️ Valyuta kursi topilmadi.")
+            return
+
+        result = amount * rate
+        await update.message.reply_text(f"💱 {amount} {from_currency} = {round(result, 2)} {to_currency}")
+    except ValueError:
+        await update.message.reply_text("❗ Iltimos, faqat raqam kiriting.")
+
+# ▶️ Botni ishga tushirish
+if __name__ == '__main__':
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
+
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CallbackQueryHandler(button))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_amount))
+
+    print("✅ Bot ishga tushdi...")
+    app.run_polling()
